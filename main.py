@@ -28,9 +28,22 @@ async def upload_file(file: UploadFile = File(...)):
     
     df = pd.read_csv(file_path, encoding='utf-8') if file.filename.endswith(".csv") else pd.read_excel(file_path)
     
-    return {
-        "message": "File uploaded successfully",
-        "filename": file.filename,
+    summary = {
         "rows": len(df),
-        "columns": list(df.columns)
+        "columns": list(df.columns),
+        "numeric_summary": {}
+    }
+    
+    for col in df.select_dtypes(include='number').columns:
+        summary["numeric_summary"][col] = {
+            "min": float(round(df[col].min(), 2)),
+            "max": float(round(df[col].max(), 2)),
+            "mean": float(round(df[col].mean(), 2)),
+            "total": float(round(df[col].sum(), 2))
+        }
+    
+    return {
+        "message": "File uploaded and analyzed successfully",
+        "filename": file.filename,
+        "summary": summary
     }
