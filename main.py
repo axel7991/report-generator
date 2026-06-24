@@ -5,6 +5,9 @@ import os
 import anthropic
 from dotenv import load_dotenv
 from pydantic import BaseModel
+import matplotlib.pyplot as plt
+import base64
+from io import BytesIO
 
 load_dotenv()
 
@@ -19,6 +22,33 @@ app.add_middleware(
 
 os.makedirs("uploads", exist_ok=True)
 os.makedirs("outputs", exist_ok=True)
+
+def generate_charts(df):
+    charts = []
+    numeric_cols = df.select_dtypes(include='number').columns
+    
+    for col in numeric_cols:
+        fig, ax = plt.subplots(figsize=(8, 4))
+        ax.bar(range(len(df)), df[col], color='#2a3f58')
+        ax.set_title(f'{col} Over Time')
+        ax.set_ylabel(col)
+        if 'Month' in df.columns:
+            ax.set_xticks(range(len(df)))
+            ax.set_xticklabels(df['Month'], rotation=45)
+        plt.tight_layout()
+        
+        buffer = BytesIO()
+        plt.savefig(buffer, format='png')
+        buffer.seek(0)
+        chart_base64 = base64.b64encode(buffer.read()).decode('utf-8')
+        plt.close()
+        
+        charts.append({
+            "column": col,
+            "chart": chart_base64
+        })
+    
+    return charts
 
 @app.get("/")
 def home():
@@ -96,8 +126,11 @@ Keep it concise and business-focused."""
         }]
     )
     
+    charts = generate_charts(df)
+    
     return {
         "filename": request.filename,
         "summary": summary,
-        "report": message.content[0].text
+        "report": message.content[0].text,
+        "charts": charts
     }
