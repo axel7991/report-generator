@@ -8,6 +8,12 @@ from pydantic import BaseModel
 import matplotlib.pyplot as plt
 import base64
 from io import BytesIO
+from reportlab.lib.pagesizes import letter
+from reportlab.lib import colors
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Image
+from reportlab.lib.styles import getSampleStyleSheet
+from fastapi.responses import FileResponse
+import io
 
 load_dotenv()
 
@@ -134,3 +140,79 @@ Keep it concise and business-focused."""
         "report": message.content[0].text,
         "charts": charts
     }
+
+@app.post("/download-report")
+async def download_report(request: ReportRequest):
+    file_path = f"uploads/{request.filename}"
+    
+    df = pd.read_csv(file_path) if request.filename.endswith(".csv") else pd.read_excel(file_path)
+    
+    summary = {}
+    for col in df.select_dtypes(include='number').columns:
+        summary[col] = {
+            "min": float(df[col].min()),
+            "max": float(df[col].max()),
+            "mean": float(round(df[col].mean(), 2)),
+            "total": float(df[col].sum())
+        }
+    
+    client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+    message = client.messages.create(
+        model="claude-opus-4-6",
+        max_tokens=1000,
+        messages=[{
+            "role": "user",
+            "content": f"""You are a business analyst. Analyze this data and write a professional report narrative.
+
+DATA SUMMARY:
+{summary}
+
+COLUMNS: {list(df.columns)}
+ROWS: {len(df)}
+
+Write a clear, professional 3-4 paragraph business report that:
+1. Summarizes overall performance
+2. Highlights key trends and insights
+3. Identifies the best and worst performing metrics
+4. Provides 2-3 actionable recommendations
+
+Keep it concise and business-focused."""
+        }]
+    )
+    report_text = message.content[0].text
+    
+    charts = generate_charts(df)
+    
+    output_path = f"outputs/report_{request.filename.replace('.csv', '').replace('.xlsx', '')}.pdf"
+    doc = SimpleDocTemplate(output_path, pagesize=letter)
+    styles = getSampleStyleSheet()
+    story = []
+    
+    story.append(Paragraph("Business Report", styles['Title']))
+    story.append(Spacer(1, 20))
+    story.append(Paragraph("Executive Summary", styles['Heading1']))
+    story.append(Spacer(1, 10))
+    
+    for para in report_text.split('\n\n'):
+        if para.strip():
+            story.append(Paragraph(para.strip(), styles['Normal']))
+            story.append(Spacer(1, 10))
+    
+    story.append(Paragraph("Charts", styles['Heading1']))
+    story.append(Spacer(1, 10))
+    
+    for chart in charts:
+        img_data = base64.b64decode(chart['chart'])
+        img_buffer = io.BytesIO(img_data)
+        img = Image(img_buffer, width=450, height=225)
+        story.append(Paragraph(f"{chart['column']} Chart", styles['Heading2']))
+        story.append(img)
+        story.append(Spacer(1, 20))
+    
+    doc.build(story)
+    
+    return FileResponse(
+        output_path,
+        media_type="application/pdf",
+        filename=f"report_{request.filename.replace('.csv', '').replace('.xlsx', '')}.pdf"
+    )
